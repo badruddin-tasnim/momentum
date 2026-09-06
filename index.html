@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#030712" media="(prefers-color-scheme: dark)">
 <meta name="description" content="Categories of life goals, each with a roadmap of steps. Key-date countdowns and daily nudges.">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -669,6 +669,15 @@
             <div class="code" x-text="syncRawUrl()"></div>
           </div>
         </template>
+        <div class="field" style="border-top:1px solid var(--line); padding-top:18px;">
+          <span class="label">Import data</span>
+          <div class="help" style="margin-bottom:6px;">Paste a Momentum JSON export here. It replaces what's on this device and syncs to your gist.</div>
+          <textarea rows="3" x-model="sync.importDraft" placeholder='{"categories":[…],"keyDates":[…]}' spellcheck="false" style="font-family:var(--mono); font-size:12px;"></textarea>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
+            <button class="pill ghost" @click="pasteImport()">Paste from clipboard</button>
+            <button class="pill" @click="importData()" :disabled="!sync.importDraft.trim()">Import</button>
+          </div>
+        </div>
       </div>
       <div class="m-foot">
         <button class="tbtn" x-show="syncCfg().token" @click="disconnectSync()">Disconnect</button>
@@ -701,7 +710,7 @@ function app(){
     move:{open:false, fromId:null, goalId:null},
     toast:'', toastTimer:null,
     nudge:{tone:'', html:'', goalId:null, key:0}, nudgeIndex:0,
-    sync:{open:false, tokenDraft:''}, syncStatus:'off', installable:false,
+    sync:{open:false, tokenDraft:'', importDraft:''}, syncStatus:'off', installable:false,
 
     async init(){
       let state = null;
@@ -748,6 +757,19 @@ function app(){
         if(S.status!=='error') this.say('Synced to GitHub');
       }
       if(S.status==='error') this.say('Sync failed — check the token');
+    },
+    async pasteImport(){ try{ this.sync.importDraft = await navigator.clipboard.readText(); }catch(e){ this.say('Clipboard not available — paste manually'); } },
+    importData(){
+      let data; try{ data = JSON.parse(this.sync.importDraft); }catch(e){ this.say('That is not valid JSON'); return; }
+      if(!data || !Array.isArray(data.categories)){ this.say('JSON needs a "categories" array'); return; }
+      const norm = (arr) => (Array.isArray(arr)?arr:[]);
+      const cats = data.categories.map(c => ({ id: c.id||this.uid(), name: String(c.name||'Untitled'), goals: norm(c.goals).map(g => ({ id: g.id||this.uid(), title: String(g.title||'Untitled goal'), note: g.note||'', targetDate: g.targetDate||'', createdAt: g.createdAt||Date.now(), steps: norm(g.steps).map(s => ({ id: s.id||this.uid(), text: String(s.text||''), done: !!s.done, children: norm(s.children).map(c2 => ({ id: c2.id||this.uid(), text: String(c2.text||''), done: !!c2.done })) })) })) }));
+      const dates = norm(data.keyDates).map(d => ({ id: d.id||this.uid(), label: String(d.label||''), date: d.date||'' })).filter(d => d.label && d.date);
+      const n = cats.reduce((s,c)=>s+c.goals.length,0);
+      if(this.totalGoals()>0 && !confirm('Replace your current '+this.totalGoals()+' goals with the '+n+' in this import?')) return;
+      this.categories = cats; this.keyDates = dates; this.lastProgress = data.lastProgress || this.lastProgress;
+      this.sync.importDraft=''; this.sync.open=false; this.persist(); this.buildNudge();
+      this.say('Imported '+n+' goal'+(n===1?'':'s')+' in '+cats.length+' categor'+(cats.length===1?'y':'ies'));
     },
     disconnectSync(){ const S=window.MomentumSync; S.cfg={token:'', gistId:'', owner:''}; S.save(); S.set('off'); this.say('Sync disconnected'); },
 
