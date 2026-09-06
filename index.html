@@ -119,7 +119,9 @@
 
   // Service worker (only on a real origin, never inside a sandbox)
   if('serviceWorker' in navigator && window.origin !== 'null' && location.protocol==='https:'){
-    window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+    window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js', {updateViaCache:'none'}).then(reg=>{ reg.update().catch(()=>{}); }).catch(()=>{}));
+    let __hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(__hadController){ location.reload(); } __hadController = true; });
   }
   // Install prompt
   window.__installEvt = null;
@@ -616,7 +618,7 @@
 
   <div class="pad">
     <div class="foot">
-      <span>Momentum</span>
+      <span>Momentum · build v5</span>
       <span x-text="'Last change · ' + lastSavedLabel()"></span>
     </div>
   </div>
