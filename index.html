@@ -76,13 +76,39 @@
       this.set('syncing');
       this.timer = setTimeout(()=>this.push(state), 1500);
     },
-    rawUrl(){ return this.cfg.owner && this.cfg.gistId ? 'https://gist.githubusercontent.com/'+this.cfg.owner+'/'+this.cfg.gistId+'/raw/'+FILE : ''; }
+    rawUrl(){ return this.cfg.owner && this.cfg.gistId ? 'https://gist.githubusercontent.com/'+this.cfg.owner+'/'+this.cfg.gistId+'/raw/'+FILE : ''; },
+    async discover(){
+      if(!this.enabled()) return null;
+      this.set('syncing');
+      try{
+        const r = await fetch('https://api.github.com/gists?per_page=100', {headers:this.headers(), cache:'no-store'});
+        if(!r.ok) throw new Error('GitHub '+r.status);
+        const list = (await r.json()).filter(g => g.files && g.files[FILE]);
+        let best = null;
+        for(const g of list){
+          try{
+            const gr = await fetch('https://api.github.com/gists/'+g.id, {headers:this.headers(), cache:'no-store'});
+            if(!gr.ok) continue;
+            const full = await gr.json(); const f = full.files[FILE]; if(!f) continue;
+            let txt = f.content; if(f.truncated){ txt = await (await fetch(f.raw_url, {cache:'no-store'})).text(); }
+            const data = JSON.parse(txt);
+            const goals = (data.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0);
+            const score = goals*1e15 + (data.lastSaved||0);
+            if(!best || score > best.score) best = {id:g.id, owner:(full.owner&&full.owner.login)||'', score, data};
+          }catch(e){}
+        }
+        if(best){ this.cfg.gistId = best.id; this.cfg.owner = best.owner || this.cfg.owner; this.save(); }
+        this.set('idle');
+        return best ? best.data : null;
+      }catch(e){ this.set('error', e.message); return null; }
+    }
   };
 
   window.MomentumSync = Sync;
   window.HyperApp = {
     async getState(){
       const local = readLS(LS_STATE);
+      if(Sync.enabled() && !Sync.cfg.gistId) await Sync.discover();
       const remote = await Sync.pull();
       if(remote && (!local || (remote.lastSaved||0) > (local.lastSaved||0))){ writeLS(LS_STATE, remote); return remote; }
       if(local && remote && (local.lastSaved||0) > (remote.lastSaved||0)) Sync.schedule(local);
@@ -659,9 +685,13 @@
           <span class="label">GitHub token</span>
           <input type="password" x-model="sync.tokenDraft" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
         </div>
-        <div class="sync-status">
-          <span class="sync-dot" :class="syncStatus"></span>
-          <span x-text="syncLabel()"></span>
+        <div class="field">
+          <span class="label">Gist ID (optional — found automatically)</span>
+          <input type="text" x-model="sync.gistDraft" :placeholder="syncCfg().gistId || 'auto-detect from your account'" autocomplete="off" spellcheck="false" style="font-family:var(--mono); font-size:13px;">
+        </div>
+        <div class="sync-status" style="justify-content:space-between; gap:14px; flex-wrap:wrap;">
+          <span style="display:flex; align-items:center; gap:8px;"><span class="sync-dot" :class="syncStatus"></span><span x-text="syncLabel()"></span></span>
+          <button class="pill ghost" x-show="syncCfg().token" @click="resync()">Sync now</button>
         </div>
         <template x-if="syncCfg().gistId">
           <div class="field">
@@ -683,7 +713,7 @@
         <button class="tbtn" x-show="syncCfg().token" @click="disconnectSync()">Disconnect</button>
         <span style="flex:1"></span>
         <button class="tbtn" @click="sync.open=false">Close</button>
-        <button class="pill" @click="connectSync()" :disabled="!sync.tokenDraft.trim()">Save &amp; sync now</button>
+        <button class="pill" @click="connectSync()" :disabled="!sync.tokenDraft.trim() && !syncCfg().token">Save &amp; sync now</button>
       </div>
     </div>
   </div>
@@ -710,7 +740,7 @@ function app(){
     move:{open:false, fromId:null, goalId:null},
     toast:'', toastTimer:null,
     nudge:{tone:'', html:'', goalId:null, key:0}, nudgeIndex:0,
-    sync:{open:false, tokenDraft:'', importDraft:''}, syncStatus:'off', installable:false,
+    sync:{open:false, tokenDraft:'', importDraft:'', gistDraft:''}, syncStatus:'off', installable:false,
 
     async init(){
       let state = null;
@@ -745,18 +775,33 @@ function app(){
     syncRawUrl(){ return window.MomentumSync.rawUrl(); },
     syncLabel(){ const S=window.MomentumSync; if(!S.enabled()) return 'Not connected — data stays on this device'; if(S.status==='syncing') return 'Syncing…'; if(S.status==='error') return 'Sync failed: '+S.lastError; return S.cfg.gistId ? 'Connected · synced to a private gist' : 'Connected · waiting for first save'; },
     async connectSync(){
-      const S=window.MomentumSync; const t=this.sync.tokenDraft.trim(); if(!t) return;
-      S.cfg.token=t; S.save(); this.sync.tokenDraft='';
-      const remote = await S.pull();
+      const S=window.MomentumSync; const t=this.sync.tokenDraft.trim();
+      if(t){ S.cfg.token=t; }
+      if(!S.cfg.token) return;
+      const gid = this.sync.gistDraft.trim(); if(gid){ S.cfg.gistId = gid; }
+      S.save(); this.sync.tokenDraft=''; this.sync.gistDraft='';
+      await this.resync(true);
+    },
+    async resync(first){
+      const S=window.MomentumSync; if(!S.enabled()) return;
+      let remote = null;
+      if(!S.cfg.gistId) remote = await S.discover();
+      if(S.cfg.gistId && !remote) remote = await S.pull();
+      const remoteGoals = remote ? (remote.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0) : 0;
+      const localGoals = this.totalGoals();
       const local = {categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress};
-      if(remote && (remote.lastSaved||0) > (local.lastSaved||0)){
-        this.categories=remote.categories||[]; this.keyDates=remote.keyDates||[]; this.lastSaved=remote.lastSaved||null; this.lastProgress=remote.lastProgress||null; this.buildNudge();
-        this.say('Pulled newer data from your gist');
+      if(remote && (localGoals===0 && remoteGoals>0 || (remote.lastSaved||0) > (local.lastSaved||0))){
+        this.categories=remote.categories||[]; this.keyDates=remote.keyDates||[]; this.lastSaved=remote.lastSaved||null; this.lastProgress=remote.lastProgress||null;
+        try{ localStorage.setItem('momentum.state', JSON.stringify(remote)); }catch(e){}
+        this.buildNudge(); this.say('Pulled '+remoteGoals+' goal'+(remoteGoals===1?'':'s')+' from your gist');
+      } else if(remote && remoteGoals>0 && localGoals===0){
+        this.say('Nothing to sync');
       } else {
+        if(localGoals===0 && !remote && !first){ this.say('No goals here and no gist found yet'); return; }
         await S.push(local);
-        if(S.status!=='error') this.say('Synced to GitHub');
+        if(S.status!=='error') this.say(remote ? 'Gist is up to date' : 'Synced to GitHub');
       }
-      if(S.status==='error') this.say('Sync failed — check the token');
+      if(S.status==='error') this.say('Sync failed — '+S.lastError);
     },
     async pasteImport(){ try{ this.sync.importDraft = await navigator.clipboard.readText(); }catch(e){ this.say('Clipboard not available — paste manually'); } },
     importData(){
