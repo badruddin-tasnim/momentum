@@ -618,7 +618,7 @@
 
   <div class="pad">
     <div class="foot">
-      <span>Momentum · build v6</span>
+      <span>Momentum · build v7</span>
       <span x-text="'Last change · ' + lastSavedLabel()"></span>
     </div>
   </div>
@@ -687,9 +687,16 @@
           <span class="label">GitHub token</span>
           <input type="password" x-model="sync.tokenDraft" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
         </div>
+        <div class="field" x-show="syncCfg().token">
+          <span class="label">This device is using</span>
+          <div class="code" style="user-select:text;">
+            <span x-text="syncCfg().gistId ? 'gist ' + syncCfg().gistId : 'no gist yet — press Sync now'"></span>
+            <span x-show="sync.lastRemoteGoals!==null" x-text="' · ' + sync.lastRemoteGoals + ' goals in gist · ' + totalGoals() + ' on this device'"></span>
+          </div>
+        </div>
         <div class="field">
-          <span class="label">Gist ID (optional — found automatically)</span>
-          <input type="text" x-model="sync.gistDraft" :placeholder="syncCfg().gistId || 'auto-detect from your account'" autocomplete="off" spellcheck="false" style="font-family:var(--mono); font-size:13px;">
+          <span class="label">Force a specific Gist ID (optional)</span>
+          <input type="text" x-model="sync.gistDraft" placeholder="leave empty to auto-detect" autocomplete="off" spellcheck="false" style="font-family:var(--mono); font-size:13px;">
         </div>
         <div class="sync-status" style="justify-content:space-between; gap:14px; flex-wrap:wrap;">
           <span style="display:flex; align-items:center; gap:8px;"><span class="sync-dot" :class="syncStatus"></span><span x-text="syncLabel()"></span></span>
@@ -742,7 +749,7 @@ function app(){
     move:{open:false, fromId:null, goalId:null},
     toast:'', toastTimer:null,
     nudge:{tone:'', html:'', goalId:null, key:0}, nudgeIndex:0,
-    sync:{open:false, tokenDraft:'', importDraft:'', gistDraft:''}, syncStatus:'off', installable:false,
+    sync:{open:false, tokenDraft:'', importDraft:'', gistDraft:'', lastRemoteGoals:null}, syncStatus:'off', installable:false,
 
     async init(){
       let state = null;
@@ -782,19 +789,15 @@ function app(){
       if(!S.cfg.token) return;
       const gid = this.sync.gistDraft.trim(); if(gid){ S.cfg.gistId = gid; }
       S.save(); this.sync.tokenDraft=''; this.sync.gistDraft='';
-      await this.resync(true);
+      await this.resync(true, !!gid);
     },
-    async resync(first){
+    async resync(first, forced){
       const S=window.MomentumSync; if(!S.enabled()) return;
-      let remote = null;
-      if(!S.cfg.gistId) remote = await S.discover();
-      if(S.cfg.gistId && !remote) remote = await S.pull();
+      // Always scan the account and use the gist with the most goals (newest on ties). Handles stray/empty gists from other devices.
+      let remote = forced ? await S.pull() : await S.discover();
+      if(!remote && S.cfg.gistId) remote = await S.pull();
       let remoteGoals = remote ? (remote.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0) : 0;
-      // If the gist we're pointed at is empty, look for a better one in the account (handles a stray gist created by another device)
-      if(remoteGoals===0 && this.totalGoals()===0){
-        const found = await S.discover();
-        if(found){ remote = found; remoteGoals = (found.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0); }
-      }
+      this.sync.lastRemoteGoals = remote ? remoteGoals : null;
       const localGoals = this.totalGoals();
       const local = {categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress};
       if(remote && (localGoals===0 && remoteGoals>0 || (remote.lastSaved||0) > (local.lastSaved||0))){
