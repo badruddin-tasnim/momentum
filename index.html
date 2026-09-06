@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Momentum</title>
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#030712" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Categories of life goals, each with a roadmap of steps. Key-date countdowns and daily nudges.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Momentum">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script>
+/* ---------------- Storage + GitHub Gist sync ---------------- */
+(function(){
+  const LS_STATE='momentum.state', LS_SYNC='momentum.sync';
+  const FILE='momentum.json';
+  const readLS = k => { try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch(e){ return null; } };
+  const writeLS = (k,v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+
+  const Sync = {
+    cfg: readLS(LS_SYNC) || {token:'', gistId:'', owner:''},
+    status: 'off', // off | idle | syncing | error
+    lastError: '',
+    timer: null,
+    listeners: [],
+    on(fn){ this.listeners.push(fn); },
+    set(status, err){ this.status=status; this.lastError=err||''; this.listeners.forEach(f=>f(status)); },
+    save(){ writeLS(LS_SYNC, this.cfg); },
+    enabled(){ return !!this.cfg.token; },
+    headers(){ return {'Authorization':'Bearer '+this.cfg.token, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json'}; },
+    async pull(){
+      if(!this.enabled() || !this.cfg.gistId) return null;
+      this.set('syncing');
+      try{
+        const r = await fetch('https://api.github.com/gists/'+this.cfg.gistId, {headers:this.headers(), cache:'no-store'});
+        if(!r.ok) throw new Error('GitHub '+r.status);
+        const g = await r.json();
+        const f = g.files && g.files[FILE];
+        if(!f) { this.set('idle'); return null; }
+        let txt = f.content;
+        if(f.truncated){ const rr = await fetch(f.raw_url, {cache:'no-store'}); txt = await rr.text(); }
+        this.set('idle');
+        return JSON.parse(txt);
+      }catch(e){ this.set('error', e.message); return null; }
+    },
+    async push(state){
+      if(!this.enabled()) return;
+      this.set('syncing');
+      try{
+        const body = {description:'Momentum — life goals data', public:false, files:{[FILE]:{content:JSON.stringify(state)}}};
+        let r;
+        if(this.cfg.gistId){
+          r = await fetch('https://api.github.com/gists/'+this.cfg.gistId, {method:'PATCH', headers:this.headers(), body:JSON.stringify(body)});
+          if(r.status===404){ this.cfg.gistId=''; return this.push(state); }
+        } else {
+          r = await fetch('https://api.github.com/gists', {method:'POST', headers:this.headers(), body:JSON.stringify(body)});
+        }
+        if(!r.ok) throw new Error('GitHub '+r.status);
+        const g = await r.json();
+        this.cfg.gistId = g.id; this.cfg.owner = (g.owner && g.owner.login) || this.cfg.owner; this.save();
+        this.set('idle');
+      }catch(e){ this.set('error', e.message); }
+    },
+    schedule(state){
+      if(!this.enabled()) return;
+      clearTimeout(this.timer);
+      this.set('syncing');
+      this.timer = setTimeout(()=>this.push(state), 1500);
+    },
+    rawUrl(){ return this.cfg.owner && this.cfg.gistId ? 'https://gist.githubusercontent.com/'+this.cfg.owner+'/'+this.cfg.gistId+'/raw/'+FILE : ''; }
+  };
+
+  window.MomentumSync = Sync;
+  window.HyperApp = {
+    async getState(){
+      const local = readLS(LS_STATE);
+      const remote = await Sync.pull();
+      if(remote && (!local || (remote.lastSaved||0) > (local.lastSaved||0))){ writeLS(LS_STATE, remote); return remote; }
+      if(local && remote && (local.lastSaved||0) > (remote.lastSaved||0)) Sync.schedule(local);
+      return local;
+    },
+    async setState(s){ writeLS(LS_STATE, s); Sync.schedule(s); }
+  };
+
+  // Service worker (only on a real origin, never inside a sandbox)
+  if('serviceWorker' in navigator && window.origin !== 'null' && location.protocol==='https:'){
+    window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+  }
+  // Install prompt
+  window.__installEvt = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window.__installEvt = e; document.dispatchEvent(new CustomEvent('momentum-installable')); });
+})();
+</script>
+<style>
+  :root{
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --spring:cubic-bezier(.34,1.56,.64,1);
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  html[data-theme="light"]{
+    --bg:#ffffff; --bg-2:#f9fafb; --bg-3:#f3f4f6;
+    --line:#e5e7eb; --line-2:#d1d5dc; --line-strong:#030712;
+    --ink:#030712; --ink-2:#4a5565; --ink-3:#99a1af;
+    --accent:#0ea5e9; --accent-text:#0284c7; --accent-soft:rgba(14,165,233,.10);
+    --btn-bg:#030712; --btn-ink:#ffffff; --overlay:rgba(3,7,18,.45);
+    --stripe:rgba(3,7,18,.07);
+  }
+  html[data-theme="dark"]{
+    --bg:#030712; --bg-2:#0a0f1c; --bg-3:#101828;
+    --line:#1e2939; --line-2:#364153; --line-strong:#f3f4f6;
+    --ink:#f3f4f6; --ink-2:#99a1af; --ink-3:#4a5565;
+    --accent:#38bdf8; --accent-text:#38bdf8; --accent-soft:rgba(56,189,248,.12);
+    --btn-bg:#ffffff; --btn-ink:#030712; --overlay:rgba(0,0,0,.65);
+    --stripe:rgba(243,244,246,.06);
+  }
+  [x-cloak]{display:none !important;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0; overflow-x:hidden;}
+  body{
+    background-color:var(--bg);
+    background-image:repeating-linear-gradient(315deg,var(--stripe) 0 1px,transparent 1px 10px);
+    color:var(--ink); font-family:'Inter',system-ui,sans-serif; font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; font-feature-settings:"tnum","cv11";
+    transition:background-color .35s var(--ease), color .35s var(--ease);
+    min-height:100vh; -webkit-tap-highlight-color:transparent;
+  }
+  h1,h2,h3{margin:0; font-weight:600; letter-spacing:-0.025em;}
+  button{font-family:inherit; color:inherit; background:none; border:none; padding:0; cursor:pointer; touch-action:manipulation;}
+  input,textarea{font-family:inherit; color:inherit;}
+  ::selection{background:var(--accent); color:#fff;}
+  svg{display:block;}
+
+  /* ---- Frame ---- */
+  .frame{max-width:1280px; margin:0 auto; background:var(--bg); border-left:1px solid var(--line); border-right:1px solid var(--line); min-height:100vh; transition:background-color .35s var(--ease);}
+  .rule{height:1px; background:var(--line); position:relative;}
+  .rule::before,.rule::after{content:""; position:absolute; top:0; height:1px; width:100vw; background:var(--line);}
+  .rule::before{right:100%;} .rule::after{left:100%;}
+  .pad{padding:0 40px;}
+  @media (max-width:640px){.pad{padding:0 18px;} .frame{border-left:none; border-right:none;}}
+
+  /* ---- Top bar ---- */
+  .top{display:flex; align-items:center; justify-content:space-between; height:60px;}
+  .wordmark{display:flex; align-items:center; gap:10px; font-weight:600; font-size:14px; letter-spacing:-0.01em;}
+  .wordmark i{width:18px; height:18px; border-radius:5px; background:var(--accent); display:grid; place-items:center; transition:transform .5s var(--spring);}
+  .wordmark i::after{content:""; width:6px; height:6px; background:var(--bg); border-radius:1px;}
+  .wordmark:hover i{transform:rotate(180deg);}
+  .top-right{display:flex; align-items:center; gap:18px; font-size:12.5px; color:var(--ink-2); font-family:var(--mono);}
+  @media (max-width:420px){.top-right .today{display:none;}}
+  .theme{position:relative; width:42px; height:24px; border:1px solid var(--line-2); border-radius:999px; background:var(--bg-2); transition:background .3s, border-color .3s;}
+  .theme i{position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:var(--ink); transition:transform .35s var(--spring), background .3s;}
+  html[data-theme="dark"] .theme i{transform:translateX(18px); background:var(--accent);}
+
+  /* ---- Labels & buttons ---- */
+  .label{font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-2); font-weight:500;}
+  .tbtn{font-size:13px; font-weight:500; color:var(--ink-2); display:inline-flex; align-items:center; gap:6px; transition:color .2s; padding:6px 0;}
+  .tbtn:hover{color:var(--ink);}
+  .tbtn.accent{color:var(--accent-text);}
+  .pill{background:var(--btn-bg); color:var(--btn-ink); padding:8px 16px; font-size:13px; font-weight:600; border-radius:999px; transition:opacity .2s, transform .25s var(--spring);}
+  .pill:hover{opacity:.85;} .pill:active{transform:scale(.97);}
+  .pill:disabled{opacity:.35; cursor:not-allowed;}
+  .pill.ghost{background:transparent; color:var(--ink); border:1px solid var(--line-2);}
+  .ibtn{width:28px;height:28px; display:grid; place-items:center; border-radius:6px; color:var(--ink-3); transition:background .2s, color .2s; position:relative;}
+  .ibtn::before{content:""; position:absolute; inset:-6px;}
+  .ibtn svg{width:14px;height:14px;}
+  .ibtn:hover{background:var(--bg-3); color:var(--ink);}
+  .ibtn.danger:hover{color:var(--accent-text);}
+  .plus{width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line-2); border-radius:50%; color:var(--ink-2); transition:background .25s var(--ease), color .25s, border-color .25s, transform .3s var(--spring); flex-shrink:0;}
+  .plus svg{width:12px;height:12px;}
+  .plus:hover{background:var(--ink); border-color:var(--ink); color:var(--bg); transform:rotate(90deg);}
+  .plus:disabled{opacity:.3; cursor:not-allowed; transform:none;}
+
+  /* ---- Hero / key dates ---- */
+  .hero{display:grid; grid-template-columns:1.1fr 1fr; gap:64px; align-items:end; padding:64px 0 56px;}
+  @media (max-width:900px){.hero{grid-template-columns:1fr; gap:36px; padding:40px 0 36px;}}
+  .hero .label{margin-bottom:22px; display:block; color:var(--accent-text);}
+  .hero h1{font-size:clamp(38px,5vw,60px); line-height:1.02; letter-spacing:-0.04em; font-weight:600;}
+  .hero h1 em{font-style:normal; color:var(--accent-text);}
+  .hero p{color:var(--ink-2); font-size:16px; margin:20px 0 0; max-width:440px; line-height:1.6;}
+  .dates-head{display:flex; align-items:center; justify-content:space-between; padding-bottom:10px; border-bottom:1px solid var(--line-2);}
+  .date-row{display:grid; grid-template-columns:1fr auto 28px; gap:14px; align-items:center; padding:14px 0; border-bottom:1px solid var(--line); animation:rise .5s var(--ease) both;}
+  .date-row .name{font-weight:500;}
+  .date-row .when{font-size:12px; color:var(--ink-3); font-family:var(--mono); margin-top:2px;}
+  .date-row .big{font-size:28px; font-weight:600; letter-spacing:-0.03em; line-height:1; text-align:right; transition:color .3s; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .date-row .big small{font-size:11px; font-weight:500; letter-spacing:.04em; color:var(--ink-2); margin-left:6px; font-family:var(--mono); text-transform:uppercase;}
+  .date-row.urgent .big{color:var(--accent-text);}
+  .date-row.past .big{color:var(--ink-3);}
+  .date-row .x{opacity:0; transition:opacity .2s;}
+  .date-row:hover .x{opacity:1;}
+  .add-date{display:grid; grid-template-columns:1fr auto 28px; gap:14px; padding-top:12px; align-items:center;}
+  .add-date input{border:none; border-bottom:1px solid var(--line); background:transparent; padding:8px 0; font-size:13.5px; outline:none; transition:border-color .25s; min-width:0;}
+  .add-date input::placeholder{color:var(--ink-3);}
+  .add-date input:focus{border-color:var(--accent);}
+  .add-date input[type=date]{color:var(--ink-2); width:132px; font-family:var(--mono); font-size:12px;}
+  @media (max-width:420px){.add-date input[type=date]{width:112px;}}
+
+  /* ---- Nudge ---- */
+  .nudge{display:grid; grid-template-columns:auto 1fr auto; gap:22px; align-items:center; padding:22px 0;}
+  @media (max-width:760px){.nudge{grid-template-columns:auto 1fr; row-gap:14px;} .nudge .nudge-actions{grid-column:1 / -1; justify-content:flex-start;}}
+  .nudge-mark{width:44px; height:44px; border-radius:50%; background:var(--accent-soft); display:grid; place-items:center; color:var(--accent-text); position:relative; flex-shrink:0;}
+  .nudge-mark::after{content:""; position:absolute; inset:-1px; border-radius:50%; border:1px solid var(--accent); opacity:.35; animation:pulse 2.6s var(--ease) infinite;}
+  .nudge-mark svg{width:18px;height:18px;}
+  .nudge-text{font-size:15.5px; line-height:1.5; letter-spacing:-0.01em; min-width:0;}
+  .nudge-text .label{display:block; margin-bottom:6px;}
+  .nudge-text b{font-weight:600; color:var(--accent-text);}
+  .nudge-actions{display:flex; gap:10px; align-items:center; justify-content:flex-end; flex-wrap:wrap;}
+  .nudge-swap{opacity:1;}
+  .swap-in{animation:swap .35s var(--ease) both;}
+
+  /* ---- Board ---- */
+  .section-head{display:flex; align-items:center; justify-content:space-between; padding:22px 0;}
+  .section-head h2{font-size:15px; font-weight:600; letter-spacing:-0.01em; display:flex; align-items:center; gap:10px;}
+  .section-head h2 .count{font-family:var(--mono); font-size:11px; color:var(--accent-text); background:var(--accent-soft); padding:2px 8px; border-radius:999px; font-weight:500;}
+  .board{display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); border-top:1px solid var(--line); border-left:1px solid var(--line); margin-left:-1px;}
+  @media (max-width:760px){.board{grid-template-columns:1fr; border-left:none; margin-left:0;}}
+  .col{border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:28px 28px 22px; min-height:340px; display:flex; flex-direction:column; animation:rise .5s var(--ease) both; position:relative;}
+  @media (max-width:760px){.col{border-right:none; padding:24px 0 20px; min-height:0;} .col-actions .reorder svg{transform:rotate(90deg);}}
+  .col-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:18px;}
+  .col-index{font-family:var(--mono); font-size:11px; color:var(--accent-text); letter-spacing:.06em; margin-bottom:10px; display:block;}
+  .col-title{font-size:18px; font-weight:600; letter-spacing:-0.02em; line-height:1.25; cursor:text; border-bottom:1px solid transparent; transition:border-color .25s; display:inline-block;}
+  .col-title:hover{border-color:var(--line-2);}
+  .col-title:focus{outline:none; border-color:var(--accent);}
+  .col-meta{font-size:12px; color:var(--ink-3); margin-top:4px; font-family:var(--mono);}
+  .col-actions{display:flex; gap:4px; opacity:0; transition:opacity .25s;}
+  .col:hover .col-actions{opacity:1;}
+  .goals{display:flex; flex-direction:column; flex:1;}
+
+  /* ---- Goal ---- */
+  .goal{border-top:1px solid var(--line); animation:rise .4s var(--ease) both;}
+  .goal:last-of-type{border-bottom:1px solid var(--line);}
+  .goal-row{display:grid; grid-template-columns:18px 1fr auto; gap:12px; align-items:center; padding:13px 0; cursor:pointer; user-select:none; -webkit-user-select:none;}
+  .chev{width:18px;height:18px; display:grid; place-items:center; color:var(--ink-3); transition:transform .35s var(--spring), color .25s;}
+  .chev svg{width:12px;height:12px;}
+  .goal.open .chev{transform:rotate(90deg); color:var(--accent-text);}
+  .goal-title{font-weight:500; font-size:14.5px; letter-spacing:-0.01em; transition:color .2s;}
+  .goal-row:hover .goal-title{color:var(--accent-text);}
+  .goal.done .goal-title{color:var(--ink-3); text-decoration:line-through; text-decoration-color:var(--ink-3);}
+  .goal.flash > .goal-row .goal-title{color:var(--accent-text);}
+  .goal-meta{display:flex; align-items:center; gap:12px; font-size:12px; color:var(--ink-3); white-space:nowrap;}
+  .pring{width:18px;height:18px; transform:rotate(-90deg); flex-shrink:0;}
+  .pring circle{fill:none; stroke-width:2.2;}
+  .pring .bgc{stroke:var(--line-2);}
+  .pring .fgc{stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset .6s var(--ease);}
+  .due{font-family:var(--mono); font-size:11px; letter-spacing:.02em;}
+  .due.urgent{color:var(--accent-text);}
+  .expand{display:grid; grid-template-rows:0fr; transition:grid-template-rows .45s var(--ease);}
+  .expand > div{overflow:hidden;}
+  .goal.open .expand{grid-template-rows:1fr;}
+  .goal-body{padding:2px 0 20px 30px; display:flex; flex-direction:column; gap:18px;}
+  @media (max-width:640px){.goal-body{padding-left:0;}}
+  .goal-note{font-size:13.5px; color:var(--ink-2); line-height:1.65; white-space:pre-wrap;}
+  .goal-note.empty{color:var(--ink-3); font-style:italic;}
+  .facts{display:flex; gap:18px; flex-wrap:wrap; font-size:12px; color:var(--ink-2); font-family:var(--mono);}
+  .facts b{color:var(--ink); font-weight:500;}
+
+  /* ---- Tree ---- */
+  .tree{display:flex; flex-direction:column;}
+  .tree .label{margin-bottom:8px;}
+  .step{position:relative; display:grid; grid-template-columns:16px 1fr auto; gap:10px; align-items:start; padding:7px 0 7px 18px; animation:rise .35s var(--ease) both;}
+  .step::before{content:""; position:absolute; left:0; top:0; bottom:0; width:1px; background:var(--line-2);}
+  .step::after{content:""; position:absolute; left:0; top:18px; width:12px; height:1px; background:var(--line-2);}
+  .step:last-child::before{bottom:auto; height:18px;}
+  .step.lvl2{padding-left:18px; margin-left:26px;}
+  .chk{width:16px; height:16px; margin-top:3px; border:1px solid var(--line-2); border-radius:50%; display:grid; place-items:center; transition:background .25s var(--ease), border-color .25s, transform .3s var(--spring); flex-shrink:0; position:relative;}
+  .chk::before{content:""; position:absolute; inset:-10px;}
+  .chk svg{width:9px;height:9px; color:#fff; stroke-dasharray:20; stroke-dashoffset:20; transition:stroke-dashoffset .3s var(--ease) .05s;}
+  .chk:hover{border-color:var(--accent);}
+  .chk.on{background:var(--accent); border-color:var(--accent);}
+  .chk.on svg{stroke-dashoffset:0;}
+  .chk:active{transform:scale(.85);}
+  .step-text{font-size:13.5px; line-height:1.5; transition:color .25s; outline:none; border-bottom:1px solid transparent; min-width:0; word-break:break-word;}
+  .step-text:focus{border-color:var(--accent);}
+  .step-text.on{color:var(--ink-3); text-decoration:line-through; text-decoration-color:var(--ink-3);}
+  .step-tools{display:flex; gap:2px; opacity:0; transition:opacity .2s;}
+  .step:hover .step-tools{opacity:1;}
+  .step-tools .ibtn{width:22px;height:22px;}
+  .step-tools .ibtn svg{width:11px;height:11px;}
+  .inline-add{display:grid; grid-template-columns:16px 1fr; gap:10px; align-items:center; padding:7px 0 4px 18px; position:relative;}
+  .inline-add::before{content:""; position:absolute; left:0; top:0; height:18px; width:1px; background:var(--line-2);}
+  .inline-add::after{content:""; position:absolute; left:0; top:18px; width:12px; height:1px; background:var(--line-2);}
+  .inline-add.lvl2{padding-left:18px; margin-left:26px;}
+  .inline-add .dot{width:16px;height:16px; border-radius:50%; border:1px dashed var(--ink-3); display:grid; place-items:center; color:var(--ink-3);}
+  .inline-add .dot svg{width:8px;height:8px;}
+  .inline-add input{border:none; background:transparent; outline:none; font-size:13.5px; padding:3px 0; border-bottom:1px solid transparent; transition:border-color .25s; width:100%; min-width:0;}
+  .inline-add input::placeholder{color:var(--ink-3);}
+  .inline-add input:focus{border-color:var(--accent);}
+  .goal-tools{display:flex; gap:16px; padding-top:8px; border-top:1px solid var(--line); margin-top:2px;}
+
+  /* Touch devices: reveal hover-only controls */
+  @media (hover:none){
+    .col-actions, .step-tools, .date-row .x{opacity:.7;}
+    .wordmark:hover i{transform:none;}
+  }
+
+  /* ---- Add goal / category ---- */
+  .add-goal{display:grid; grid-template-columns:18px 1fr; gap:12px; align-items:center; padding:14px 0 0;}
+  .add-goal .dot{width:18px;height:18px; display:grid; place-items:center; color:var(--ink-3);}
+  .add-goal .dot svg{width:12px;height:12px;}
+  .add-goal input{border:none; background:transparent; outline:none; font-size:14.5px; font-weight:500; padding:6px 0; border-bottom:1px solid transparent; transition:border-color .25s; width:100%; letter-spacing:-0.01em; min-width:0;}
+  .add-goal input::placeholder{color:var(--ink-3); font-weight:400;}
+  .add-goal input:focus{border-color:var(--accent);}
+  .add-col{
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:28px; min-height:340px;
+    display:grid; place-items:center; color:var(--ink-3); transition:background .3s var(--ease), color .3s;
+    background-image:repeating-linear-gradient(315deg,var(--stripe) 0 1px,transparent 1px 10px);
+  }
+  @media (max-width:760px){.add-col{min-height:120px; border-right:none;}}
+  .add-col:hover{color:var(--accent-text); background-color:var(--accent-soft);}
+  .add-col-inner{display:flex; flex-direction:column; align-items:center; gap:12px; font-size:13px; font-weight:500;}
+  .add-col-inner .plus{width:40px;height:40px; border-color:currentColor; color:inherit;}
+  .add-col-inner .plus svg{width:14px;height:14px;}
+  .add-col:hover .plus{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .empty{color:var(--ink-3); font-size:13.5px; padding:24px 0 10px; border-top:1px solid var(--line); line-height:1.6;}
+
+  .foot{padding:28px 0 40px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:var(--ink-3); font-family:var(--mono); font-size:11px; letter-spacing:.04em;}
+
+  /* ---- Modal ---- */
+  .overlay{position:fixed; inset:0; background:var(--overlay); backdrop-filter:blur(6px); display:flex; align-items:flex-start; justify-content:center; padding:8vh 16px; z-index:50; overflow-y:auto;}
+  .modal{background:var(--bg); width:100%; max-width:560px; border:1px solid var(--line); border-radius:14px; box-shadow:0 30px 80px rgba(0,0,0,.35); overflow:hidden;}
+  .m-head{display:flex; align-items:center; justify-content:space-between; padding:18px 24px; border-bottom:1px solid var(--line); background:var(--bg-2);}
+  .m-head h3{font-size:15px;}
+  .m-body{padding:24px; display:flex; flex-direction:column; gap:22px;}
+  .m-foot{padding:16px 24px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:20px; align-items:center; background:var(--bg-2);}
+  @media (max-width:640px){.m-body,.m-head,.m-foot{padding-left:18px; padding-right:18px;}}
+  .field{display:flex; flex-direction:column; gap:8px;}
+  .field input,.field textarea{border:1px solid var(--line-2); border-radius:8px; background:var(--bg); padding:10px 12px; font-size:15px; outline:none; resize:vertical; transition:border-color .25s, box-shadow .25s; width:100%;}
+  .field textarea{line-height:1.6; font-size:14px;}
+  .field input:focus,.field textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .field input[type=date]{color:var(--ink-2); font-family:var(--mono); font-size:13px;}
+  .move-opt{padding:12px 24px; width:100%; display:flex; justify-content:space-between; align-items:center; font-size:14px; font-weight:500; transition:background .2s; text-align:left; gap:12px;}
+  .move-opt:hover{background:var(--bg-2); color:var(--accent-text);}
+  .move-opt span:last-child{font-family:var(--mono); font-size:11px; color:var(--ink-3); white-space:nowrap;}
+  .fade-enter{animation:fade .25s var(--ease) both;}
+  .pop-enter{animation:pop .35s var(--ease) both;}
+
+  .toast{position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:var(--btn-bg); color:var(--btn-ink); padding:9px 14px; font-size:13px; border-radius:999px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:60; animation:toast 2.4s var(--ease) both; white-space:nowrap; max-width:calc(100vw - 32px); overflow:hidden; text-overflow:ellipsis;}
+  .toast b{color:var(--accent); font-weight:600;}
+
+  @keyframes rise{from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:none;}}
+  @keyframes fade{from{opacity:0;} to{opacity:1;}}
+  @keyframes pop{from{opacity:0; transform:translateY(12px) scale(.98);} to{opacity:1; transform:none;}}
+  @keyframes swap{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+  @keyframes pulse{0%{transform:scale(1); opacity:.35;} 70%{transform:scale(1.35); opacity:0;} 100%{transform:scale(1.35); opacity:0;}}
+  @keyframes toast{0%{opacity:0; transform:translate(-50%,10px);} 12%{opacity:1; transform:translate(-50%,0);} 85%{opacity:1;} 100%{opacity:0; transform:translate(-50%,6px);}}
+  @media (prefers-reduced-motion:reduce){ *,*::before,*::after{animation-duration:.01ms !important; transition-duration:.01ms !important;} }
+
+  /* ---- PWA header controls ---- */
+  .hbtn{display:inline-flex; align-items:center; gap:7px; height:30px; padding:0 10px; border:1px solid var(--line-2); border-radius:999px; font-size:12px; font-weight:600; color:var(--ink-2); font-family:'Inter',sans-serif; transition:color .2s, border-color .2s, background .2s;}
+  .hbtn svg{width:14px;height:14px;}
+  .hbtn:hover{color:var(--ink); border-color:var(--ink); background:var(--bg-2);}
+  .sync-dot{width:7px; height:7px; border-radius:50%; background:var(--ink-3); transition:background .3s;}
+  .sync-dot.idle{background:#22c55e;}
+  .sync-dot.syncing{background:var(--accent); animation:pulse-dot 1s ease-in-out infinite;}
+  .sync-dot.error{background:#ef4444;}
+  @keyframes pulse-dot{0%,100%{opacity:1;} 50%{opacity:.35;}}
+  .sync-status{font-family:var(--mono); font-size:11.5px; color:var(--ink-2); display:flex; align-items:center; gap:8px;}
+  .code{font-family:var(--mono); font-size:12px; background:var(--bg-2); border:1px solid var(--line); border-radius:6px; padding:8px 10px; word-break:break-all; user-select:all;}
+  .help{font-size:13px; color:var(--ink-2); line-height:1.6;}
+  .help a{color:var(--accent-text); text-decoration:none; border-bottom:1px solid var(--accent-soft);}
+  .help ol{margin:8px 0 0; padding-left:18px;}
+  .help li{margin:3px 0;}
+  @media (max-width:420px){.hbtn span{display:none;}}
+</style>
+</head>
+<body x-data="app()" x-init="init()">
+
+<div class="frame" x-show="ready" x-cloak>
+  <div class="pad">
+    <header class="top">
+      <div class="wordmark"><i></i> Momentum</div>
+      <div class="top-right">
+        <span class="today" x-text="todayLabel()"></span>
+        <button class="hbtn" x-show="installable" @click="install()" title="Install app">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+          <span>Install</span>
+        </button>
+        <button class="hbtn" @click="sync.open=true" title="Sync settings">
+          <span class="sync-dot" :class="syncStatus"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12a9 9 0 0 1 15.5-6.2"/><path d="M21 3v6h-6M3 21v-6h6"/></svg>
+        </button>
+        <button class="theme" @click="toggleTheme()" :aria-label="theme==='dark' ? 'Switch to light mode' : 'Switch to dark mode'"><i></i></button>
+      </div>
+    </header>
+  </div>
+  <div class="rule"></div>
+
+  <div class="pad">
+    <section class="hero">
+      <div>
+        <span class="label" x-text="'Personal · ' + totalGoals() + ' goals'"></span>
+        <h1>What I'm<br>working <em>toward.</em></h1>
+        <p x-text="heroLine()"></p>
+      </div>
+      <div class="dates">
+        <div class="dates-head">
+          <span class="label">Key dates</span>
+          <span class="label" x-text="keyDates.length + (keyDates.length===1 ? ' date' : ' dates')"></span>
+        </div>
+        <template x-for="d in sortedDates()" :key="d.id">
+          <div class="date-row" :class="dateState(d.date)">
+            <div>
+              <div class="name" x-text="d.label"></div>
+              <div class="when" x-text="prettyDate(d.date)"></div>
+            </div>
+            <div class="big">
+              <span x-text="daysUntilAbs(d.date)"></span><small x-text="daysUntil(d.date) < 0 ? 'days ago' : (daysUntil(d.date)===0 ? 'today' : 'days')"></small>
+            </div>
+            <button class="x ibtn danger" @click="removeDate(d.id)" aria-label="Remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </template>
+        <form class="add-date" @submit.prevent="addDate()">
+          <input type="text" x-model="newDate.label" placeholder="Add a date — e.g. Graduation">
+          <input type="date" x-model="newDate.date">
+          <button type="submit" class="plus" :disabled="!newDate.label.trim() || !newDate.date" aria-label="Add date">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </form>
+      </div>
+    </section>
+  </div>
+  <div class="rule"></div>
+
+  <!-- Nudge -->
+  <div class="pad" x-show="totalGoals()>0">
+    <div class="nudge">
+      <div class="nudge-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      </div>
+      <div class="nudge-text">
+        <span class="label" x-text="'Nudge · ' + nudge.tone"></span>
+        <div :key="nudge.key" class="swap-in" x-html="nudge.html"></div>
+      </div>
+      <div class="nudge-actions">
+        <button class="pill ghost" @click="nextNudge()">Another</button>
+        <button class="pill" x-show="nudge.goalId" @click="jumpTo(nudge.goalId)">Open goal</button>
+      </div>
+    </div>
+  </div>
+  <div class="rule" x-show="totalGoals()>0"></div>
+
+  <div class="pad">
+    <div class="section-head">
+      <h2>Goals <span class="count" x-text="totalDone() + ' / ' + totalGoals() + ' done'"></span></h2>
+      <span class="label" x-text="categories.length + (categories.length===1 ? ' category' : ' categories')"></span>
+    </div>
+  </div>
+
+  <div class="pad">
+    <div class="board">
+      <template x-for="(cat, ci) in categories" :key="cat.id">
+        <div class="col" :style="'animation-delay:'+(ci*60)+'ms'">
+          <div class="col-head">
+            <div style="flex:1; min-width:0;">
+              <span class="col-index" x-text="String(ci+1).padStart(2,'0')"></span>
+              <h3 class="col-title" contenteditable="true" spellcheck="false"
+                  @blur="renameCategory(cat, $event.target.innerText)"
+                  @keydown.enter.prevent="$event.target.blur()"
+                  x-text="cat.name"></h3>
+              <div class="col-meta" x-text="catSummary(cat)"></div>
+            </div>
+            <div class="col-actions">
+              <button class="ibtn" @click="moveCategory(ci,-1)" :disabled="ci===0" title="Move up">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <button class="ibtn" @click="moveCategory(ci,1)" :disabled="ci===categories.length-1" title="Move down">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+              <button class="ibtn danger" @click="deleteCategory(cat.id)" title="Delete category">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="goals">
+            <template x-if="cat.goals.length===0">
+              <div class="empty">Nothing here yet. Type a goal below and press Enter.</div>
+            </template>
+
+            <template x-for="g in cat.goals" :key="g.id">
+              <div class="goal" :id="'goal-'+g.id" :class="{open: openId===g.id, done: isGoalDone(g), flash: flashId===g.id}">
+                <div class="goal-row" @click="toggle(g.id)">
+                  <span class="chev">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                  </span>
+                  <span class="goal-title" x-text="g.title"></span>
+                  <span class="goal-meta">
+                    <span class="due" :class="daysUntil(g.targetDate)<=14 && 'urgent'" x-show="g.targetDate" x-text="dueText(g.targetDate)"></span>
+                    <template x-if="stepCount(g)>0">
+                      <svg class="pring" viewBox="0 0 20 20">
+                        <circle class="bgc" cx="10" cy="10" r="8"/>
+                        <circle class="fgc" cx="10" cy="10" r="8" stroke-dasharray="50.27" :stroke-dashoffset="50.27*(1-doneCount(g)/stepCount(g))"/>
+                      </svg>
+                    </template>
+                  </span>
+                </div>
+
+                <div class="expand"><div>
+                  <div class="goal-body">
+                    <div class="goal-note" :class="!g.note && 'empty'" x-text="g.note || 'No notes yet — add context, why this matters, or anything worth remembering.'"></div>
+
+                    <div class="facts" x-show="g.targetDate || stepCount(g)">
+                      <span x-show="g.targetDate">target <b x-text="prettyDate(g.targetDate)"></b></span>
+                      <span x-show="stepCount(g)"><b x-text="doneCount(g)"></b>/<b x-text="stepCount(g)"></b> steps</span>
+                    </div>
+
+                    <div class="tree">
+                      <span class="label">Roadmap</span>
+                      <template x-for="s in g.steps" :key="s.id">
+                        <div>
+                          <div class="step">
+                            <button class="chk" :class="s.done && 'on'" @click="toggleStep(s)" aria-label="Toggle step">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                            </button>
+                            <span class="step-text" :class="s.done && 'on'" contenteditable="true" spellcheck="false"
+                                  @blur="s.text=$event.target.innerText.trim() || s.text; persist()"
+                                  @keydown.enter.prevent="$event.target.blur()" x-text="s.text"></span>
+                            <span class="step-tools">
+                              <button class="ibtn" @click="subAddFor = subAddFor===s.id ? null : s.id" title="Add sub-step">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v8a4 4 0 0 0 4 4h8M14 12l4 4-4 4"/></svg>
+                              </button>
+                              <button class="ibtn danger" @click="removeStep(g, s.id)" title="Remove">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                              </button>
+                            </span>
+                          </div>
+                          <template x-for="c in s.children" :key="c.id">
+                            <div class="step lvl2">
+                              <button class="chk" :class="c.done && 'on'" @click="toggleStep(c)" aria-label="Toggle sub-step">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                              </button>
+                              <span class="step-text" :class="c.done && 'on'" contenteditable="true" spellcheck="false"
+                                    @blur="c.text=$event.target.innerText.trim() || c.text; persist()"
+                                    @keydown.enter.prevent="$event.target.blur()" x-text="c.text"></span>
+                              <span class="step-tools">
+                                <button class="ibtn danger" @click="removeChild(s, c.id)" title="Remove">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                                </button>
+                              </span>
+                            </div>
+                          </template>
+                          <div class="inline-add lvl2 fade-enter" x-show="subAddFor===s.id">
+                            <span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+                            <input type="text" placeholder="Sub-step, then Enter" x-model="subDraft"
+                                   @keydown.enter.prevent="addChild(s)" @keydown.escape="subAddFor=null" x-init="$nextTick(()=>$el.focus())">
+                          </div>
+                        </div>
+                      </template>
+                      <div class="inline-add">
+                        <span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+                        <input type="text" placeholder="Add a step — what needs to happen?" x-model="stepDraft[g.id]" @keydown.enter.prevent="addStep(g)">
+                      </div>
+                    </div>
+
+                    <div class="goal-tools">
+                      <button class="tbtn accent" @click="openEdit(cat, g)">Edit details</button>
+                      <button class="tbtn" @click="openMove(cat, g)" x-show="categories.length>1">Move</button>
+                      <button class="tbtn" @click="deleteGoal(cat, g.id)" style="margin-left:auto;">Delete</button>
+                    </div>
+                  </div>
+                </div></div>
+              </div>
+            </template>
+
+            <div class="add-goal">
+              <span class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+              <input type="text" placeholder="Add a goal" x-model="goalDraft[cat.id]" @keydown.enter.prevent="addGoal(cat)">
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <button class="add-col" @click="addCategory()">
+        <span class="add-col-inner">
+          <span class="plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          <span>New category</span>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <div class="pad">
+    <div class="foot">
+      <span>Momentum</span>
+      <span x-text="'Last change · ' + lastSavedLabel()"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Edit goal modal -->
+<template x-if="edit.open">
+  <div class="overlay fade-enter" @click.self="edit.open=false" @keydown.escape.window="edit.open=false">
+    <div class="modal pop-enter">
+      <div class="m-head">
+        <h3>Goal details</h3>
+        <button class="ibtn" @click="edit.open=false" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="m-body">
+        <div class="field"><span class="label">Title</span><input type="text" x-model="edit.form.title" x-init="$nextTick(()=>$el.focus())"></div>
+        <div class="field"><span class="label">Notes — why, how, anything useful</span><textarea rows="5" x-model="edit.form.note" placeholder="Context, reasons, resources, conditions…"></textarea></div>
+        <div class="field"><span class="label">Target date (optional)</span><input type="date" x-model="edit.form.targetDate"></div>
+      </div>
+      <div class="m-foot">
+        <button class="tbtn" @click="edit.open=false">Cancel</button>
+        <button class="pill" @click="saveEdit()" :disabled="!edit.form.title.trim()">Save changes</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- Move goal modal -->
+<template x-if="move.open">
+  <div class="overlay fade-enter" @click.self="move.open=false" @keydown.escape.window="move.open=false">
+    <div class="modal pop-enter" style="max-width:420px;">
+      <div class="m-head"><h3>Move to…</h3>
+        <button class="ibtn" @click="move.open=false" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div style="padding:8px 0;">
+        <template x-for="c in categories.filter(c=>c.id!==move.fromId)" :key="c.id">
+          <button class="move-opt" @click="doMove(c)">
+            <span x-text="c.name"></span>
+            <span x-text="c.goals.length + ' goals'"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- Sync settings modal -->
+<template x-if="sync.open">
+  <div class="overlay fade-enter" @click.self="sync.open=false" @keydown.escape.window="sync.open=false">
+    <div class="modal pop-enter">
+      <div class="m-head">
+        <h3>Sync across devices</h3>
+        <button class="ibtn" @click="sync.open=false" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="m-body">
+        <div class="help">
+          Your data lives on this device. To keep phone and desktop in sync — and to let your Telegram nudges read your goals — connect a private GitHub Gist.
+          <ol>
+            <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">GitHub → Fine-grained tokens</a>.</li>
+            <li>Name it “Momentum”, pick an expiry, and under <b>Account permissions</b> set <b>Gists → Read and write</b>. Nothing else.</li>
+            <li>Paste the token below. The gist is created automatically on your first save.</li>
+          </ol>
+        </div>
+        <div class="field">
+          <span class="label">GitHub token</span>
+          <input type="password" x-model="sync.tokenDraft" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="sync-status">
+          <span class="sync-dot" :class="syncStatus"></span>
+          <span x-text="syncLabel()"></span>
+        </div>
+        <template x-if="syncCfg().gistId">
+          <div class="field">
+            <span class="label">Gist raw URL — give this to your nudge agent</span>
+            <div class="code" x-text="syncRawUrl()"></div>
+          </div>
+        </template>
+      </div>
+      <div class="m-foot">
+        <button class="tbtn" x-show="syncCfg().token" @click="disconnectSync()">Disconnect</button>
+        <span style="flex:1"></span>
+        <button class="tbtn" @click="sync.open=false">Close</button>
+        <button class="pill" @click="connectSync()" :disabled="!sync.tokenDraft.trim()">Save &amp; sync now</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template x-if="toast">
+  <div class="toast" x-html="toast"></div>
+</template>
+
+<script>
+function app(){
+  const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+  const step = (text, children=[]) => ({id:uid(), text, done:false, children: children.map(t=>({id:uid(), text:t, done:false}))});
+  const goal = (title, steps=[], note='', targetDate='') => ({id:uid(), title, note, targetDate, steps, createdAt:Date.now()});
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function seed(){ return {keyDates:[], categories:[]}; }
+
+  return {
+    ready:false, theme:'light', now:Date.now(), lastSaved:null, lastProgress:null,
+    categories:[], keyDates:[],
+    openId:null, flashId:null, subAddFor:null, subDraft:'', stepDraft:{}, goalDraft:{}, newDate:{label:'', date:''},
+    edit:{open:false, catId:null, goalId:null, form:{}},
+    move:{open:false, fromId:null, goalId:null},
+    toast:'', toastTimer:null,
+    nudge:{tone:'', html:'', goalId:null, key:0}, nudgeIndex:0,
+    sync:{open:false, tokenDraft:''}, syncStatus:'off', installable:false,
+
+    async init(){
+      let state = null;
+      try{ state = await HyperApp.getState(); }catch(e){}
+      if(state && state.categories){
+        this.categories = state.categories; this.keyDates = state.keyDates || []; this.theme = state.theme || 'light';
+        this.lastSaved = state.lastSaved || null; this.lastProgress = state.lastProgress || null;
+      } else {
+        const s = seed(); this.categories = s.categories; this.keyDates = s.keyDates;
+        if(state && state.theme) this.theme = state.theme;
+        this.persist();
+      }
+      this.applyTheme();
+      const S = window.MomentumSync; this.syncStatus = S.enabled() ? S.status : 'off'; S.on(st => { this.syncStatus = S.enabled() ? st : 'off'; });
+      document.addEventListener('momentum-installable', () => { this.installable = true; });
+      if(window.__installEvt) this.installable = true;
+      this.nudgeIndex = Math.floor(this.now/86400000);
+      this.buildNudge();
+      this.ready = true;
+      setInterval(()=>{ this.now = Date.now(); }, 60000);
+    },
+    persist(){ this.lastSaved = Date.now(); HyperApp.setState({categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress}); },
+    progress(){ this.lastProgress = Date.now(); this.persist(); },
+    applyTheme(){ document.documentElement.setAttribute('data-theme', this.theme); },
+    toggleTheme(){ this.theme = this.theme==='dark' ? 'light' : 'dark'; this.applyTheme(); this.persist(); },
+    say(msg){ this.toast=''; clearTimeout(this.toastTimer); requestAnimationFrame(()=>{ this.toast=msg; this.toastTimer=setTimeout(()=>this.toast='', 2400); }); },
+    uid,
+
+    // ---- PWA: install + sync ----
+    async install(){ const e = window.__installEvt; if(!e) return; e.prompt(); await e.userChoice; window.__installEvt=null; this.installable=false; },
+    syncCfg(){ return window.MomentumSync.cfg; },
+    syncRawUrl(){ return window.MomentumSync.rawUrl(); },
+    syncLabel(){ const S=window.MomentumSync; if(!S.enabled()) return 'Not connected — data stays on this device'; if(S.status==='syncing') return 'Syncing…'; if(S.status==='error') return 'Sync failed: '+S.lastError; return S.cfg.gistId ? 'Connected · synced to a private gist' : 'Connected · waiting for first save'; },
+    async connectSync(){
+      const S=window.MomentumSync; const t=this.sync.tokenDraft.trim(); if(!t) return;
+      S.cfg.token=t; S.save(); this.sync.tokenDraft='';
+      const remote = await S.pull();
+      const local = {categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress};
+      if(remote && (remote.lastSaved||0) > (local.lastSaved||0)){
+        this.categories=remote.categories||[]; this.keyDates=remote.keyDates||[]; this.lastSaved=remote.lastSaved||null; this.lastProgress=remote.lastProgress||null; this.buildNudge();
+        this.say('Pulled newer data from your gist');
+      } else {
+        await S.push(local);
+        if(S.status!=='error') this.say('Synced to GitHub');
+      }
+      if(S.status==='error') this.say('Sync failed — check the token');
+    },
+    disconnectSync(){ const S=window.MomentumSync; S.cfg={token:'', gistId:'', owner:''}; S.save(); S.set('off'); this.say('Sync disconnected'); },
+
+    todayLabel(){ return new Date(this.now).toLocaleDateString(undefined,{weekday:'short', day:'2-digit', month:'short', year:'numeric'}); },
+    lastSavedLabel(){ if(!this.lastSaved) return '—'; return new Date(this.lastSaved).toLocaleString(undefined,{day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}); },
+    prettyDate(d){ if(!d) return ''; return new Date(d+'T12:00:00').toLocaleDateString(undefined,{day:'2-digit', month:'short', year:'numeric'}); },
+    daysUntil(d){ if(!d) return null; const t=new Date(d+'T23:59:59').getTime(); return Math.ceil((t-this.now)/86400000); },
+    daysUntilAbs(d){ return Math.abs(this.daysUntil(d)); },
+    dateState(d){ const n=this.daysUntil(d); if(n<0) return 'past'; if(n<=14) return 'urgent'; return ''; },
+    dueText(d){ const n=this.daysUntil(d); if(n<0) return Math.abs(n)+'d overdue'; if(n===0) return 'today'; return n+'d left'; },
+    sortedDates(){ return [...this.keyDates].sort((a,b)=>new Date(a.date)-new Date(b.date)); },
+    addDate(){ if(!this.newDate.label.trim()||!this.newDate.date) return; this.keyDates.push({id:uid(), label:this.newDate.label.trim(), date:this.newDate.date}); this.newDate={label:'',date:''}; this.persist(); },
+    removeDate(id){ this.keyDates=this.keyDates.filter(d=>d.id!==id); this.persist(); },
+    heroLine(){
+      const g=this.totalGoals(), d=this.totalDone();
+      if(g===0) return 'Categories hold your goals; each goal opens into a roadmap of steps. Start anywhere.';
+      const next=this.sortedDates().find(x=>this.daysUntil(x.date)>=0);
+      return (g-d)+' open goal'+(g-d===1?'':'s')+' across '+this.categories.length+' categor'+(this.categories.length===1?'y':'ies')+(next? '. '+this.daysUntil(next.date)+' days until '+next.label.toLowerCase()+'.' : '.');
+    },
+
+    // ---- Nudges (Duolingo-style, varied tone, personalised from your data) ----
+    allGoals(){ return this.categories.flatMap(c=>c.goals.map(g=>({g, cat:c}))); },
+    buildNudge(){
+      const items=[];
+      const all=this.allGoals();
+      const open=all.filter(x=>!this.isGoalDone(x.g));
+      const totalSteps=all.reduce((s,x)=>s+this.stepCount(x.g),0);
+      const doneSteps=all.reduce((s,x)=>s+this.doneCount(x.g),0);
+      const idle = this.lastProgress ? Math.floor((this.now-this.lastProgress)/86400000) : null;
+      const nextDate=this.sortedDates().find(x=>this.daysUntil(x.date)>=0);
+      const withSteps=open.filter(x=>this.stepCount(x.g)>0);
+      const noSteps=open.filter(x=>this.stepCount(x.g)===0);
+      const nextStepOf = g => { for(const s of g.steps){ if(!s.done) return s.text; for(const c of (s.children||[])){ if(!c.done) return c.text; } } return null; };
+      const q = s => '<b>'+esc(s)+'</b>';
+
+      if(idle!==null && idle>=3 && open.length){
+        const x=open[idle % open.length];
+        items.push({tone:'cheeky', goalId:x.g.id, html:'It’s been '+idle+' days since you moved anything. '+q(x.g.title)+' is still sitting exactly where you left it.'});
+      }
+      if(withSteps.length){
+        const x=withSteps[0]; const st=nextStepOf(x.g);
+        if(st) items.push({tone:'direct', goalId:x.g.id, html:'Next up: '+q(st)+'. One tick today keeps '+q(x.g.title)+' moving.'});
+      }
+      if(nextDate && open.length){
+        const x=open[nextDate.label.length % open.length];
+        items.push({tone:'countdown', goalId:x.g.id, html:this.daysUntil(nextDate.date)+' days until '+q(nextDate.label)+'. What’s one thing you can do for '+q(x.g.title)+' before then?'});
+      }
+      if(noSteps.length){
+        const x=noSteps[this.nudgeIndex % noSteps.length];
+        items.push({tone:'planner', goalId:x.g.id, html:q(x.g.title)+' has no roadmap yet. A goal without steps is just a wish — add the first one.'});
+      }
+      if(doneSteps>0){
+        items.push({tone:'proud', goalId:null, html:'You’ve completed '+doneSteps+' of '+totalSteps+' steps so far. That ring doesn’t fill itself — you did that.'});
+      }
+      if(open.length){
+        const x=open[(this.nudgeIndex*7) % open.length];
+        items.push({tone:'reflective', goalId:x.g.id, html:'Why did you write down '+q(x.g.title)+'? Open it and add one honest line to the notes.'});
+      }
+      if(withSteps.length>1){
+        const x=withSteps[withSteps.length-1]; const st=nextStepOf(x.g);
+        if(st) items.push({tone:'gentle', goalId:x.g.id, html:'Small is fine. '+q(st)+' doesn’t need to be finished today — it just needs to be started.'});
+      }
+      if(!items.length){ items.push({tone:'welcome', goalId:null, html:'Add a goal and I’ll start nudging you about it.'}); }
+      const pick=items[this.nudgeIndex % items.length];
+      this.nudge={...pick, key:this.nudgeIndex};
+    },
+    nextNudge(){ this.nudgeIndex++; this.buildNudge(); },
+    jumpTo(id){
+      this.openId=id; this.flashId=id;
+      this.$nextTick(()=>{ const el=document.getElementById('goal-'+id); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); setTimeout(()=>this.flashId=null, 1600); });
+    },
+
+    addCategory(){ const c={id:uid(), name:'New category', goals:[]}; this.categories.push(c); this.persist(); this.$nextTick(()=>{ const els=document.querySelectorAll('.col-title'); const el=els[els.length-1]; if(el){ el.focus(); document.getSelection().selectAllChildren(el);} }); },
+    renameCategory(cat, name){ const n=name.trim(); if(n && n!==cat.name){ cat.name=n; this.persist(); } },
+    deleteCategory(id){ const c=this.categories.find(x=>x.id===id); if(c.goals.length && !confirm('Delete "'+c.name+'" and its '+c.goals.length+' goals?')) return; this.categories=this.categories.filter(x=>x.id!==id); this.persist(); this.say('Category removed'); },
+    moveCategory(i, dir){ const j=i+dir; if(j<0||j>=this.categories.length) return; const a=this.categories; [a[i],a[j]]=[a[j],a[i]]; this.categories=[...a]; this.persist(); },
+    catSummary(cat){ const n=cat.goals.length, d=cat.goals.filter(g=>this.isGoalDone(g)).length; if(!n) return 'empty'; return n+' goal'+(n===1?'':'s')+(d? ' · '+d+' done':''); },
+    totalGoals(){ return this.categories.reduce((s,c)=>s+c.goals.length,0); },
+    totalDone(){ return this.categories.reduce((s,c)=>s+c.goals.filter(g=>this.isGoalDone(g)).length,0); },
+
+    toggle(id){ this.openId = this.openId===id ? null : id; this.subAddFor=null; },
+    addGoal(cat){ const t=(this.goalDraft[cat.id]||'').trim(); if(!t) return; const g=goal(t); cat.goals.push(g); this.goalDraft[cat.id]=''; this.openId=g.id; this.progress(); this.buildNudge(); },
+    deleteGoal(cat, id){ cat.goals=cat.goals.filter(g=>g.id!==id); if(this.openId===id) this.openId=null; this.persist(); this.buildNudge(); this.say('Goal deleted'); },
+    stepCount(g){ return g.steps.reduce((s,x)=>s+1+(x.children?x.children.length:0),0); },
+    doneCount(g){ return g.steps.reduce((s,x)=>s+(x.done?1:0)+(x.children?x.children.filter(c=>c.done).length:0),0); },
+    isGoalDone(g){ const n=this.stepCount(g); return n>0 && this.doneCount(g)===n; },
+    toggleStep(s){ s.done=!s.done; this.progress(); this.buildNudge(); },
+    addStep(g){ const t=(this.stepDraft[g.id]||'').trim(); if(!t) return; g.steps.push(step(t)); this.stepDraft[g.id]=''; this.progress(); this.buildNudge(); },
+    removeStep(g, id){ g.steps=g.steps.filter(s=>s.id!==id); this.persist(); },
+    addChild(s){ const t=this.subDraft.trim(); if(!t) return; if(!s.children) s.children=[]; s.children.push({id:uid(), text:t, done:false}); this.subDraft=''; this.progress(); },
+    removeChild(s, id){ s.children=s.children.filter(c=>c.id!==id); this.persist(); },
+    openEdit(cat, g){ this.edit={open:true, catId:cat.id, goalId:g.id, form:{title:g.title, note:g.note||'', targetDate:g.targetDate||''}}; },
+    saveEdit(){ const cat=this.categories.find(c=>c.id===this.edit.catId); const g=cat.goals.find(x=>x.id===this.edit.goalId); g.title=this.edit.form.title.trim(); g.note=this.edit.form.note.trim(); g.targetDate=this.edit.form.targetDate; this.edit.open=false; this.persist(); this.buildNudge(); this.say('Saved'); },
+    openMove(cat, g){ this.move={open:true, fromId:cat.id, goalId:g.id}; },
+    doMove(target){ const from=this.categories.find(c=>c.id===this.move.fromId); const g=from.goals.find(x=>x.id===this.move.goalId); from.goals=from.goals.filter(x=>x.id!==g.id); target.goals.push(g); this.move.open=false; this.persist(); this.say('Moved to <b>'+esc(target.name)+'</b>'); }
+  }
+}
+</script>
+</body>
+</html>
