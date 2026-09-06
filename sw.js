@@ -1,5 +1,5 @@
 /* Momentum service worker — app-shell caching for offline use. */
-const VERSION = 'momentum-v4';
+const VERSION = 'momentum-v5';
 const SHELL = [
   './',
   './index.html',
@@ -33,7 +33,7 @@ self.addEventListener('fetch', (event) => {
   // App shell: network-first so updates land quickly, cache fallback for offline.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           const copy = res.clone();
           caches.open(VERSION).then((c) => c.put(req, copy));
