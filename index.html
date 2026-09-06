@@ -618,7 +618,7 @@
 
   <div class="pad">
     <div class="foot">
-      <span>Momentum · build v5</span>
+      <span>Momentum · build v6</span>
       <span x-text="'Last change · ' + lastSavedLabel()"></span>
     </div>
   </div>
@@ -789,7 +789,12 @@ function app(){
       let remote = null;
       if(!S.cfg.gistId) remote = await S.discover();
       if(S.cfg.gistId && !remote) remote = await S.pull();
-      const remoteGoals = remote ? (remote.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0) : 0;
+      let remoteGoals = remote ? (remote.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0) : 0;
+      // If the gist we're pointed at is empty, look for a better one in the account (handles a stray gist created by another device)
+      if(remoteGoals===0 && this.totalGoals()===0){
+        const found = await S.discover();
+        if(found){ remote = found; remoteGoals = (found.categories||[]).reduce((a,c)=>a+((c.goals||[]).length),0); }
+      }
       const localGoals = this.totalGoals();
       const local = {categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress};
       if(remote && (localGoals===0 && remoteGoals>0 || (remote.lastSaved||0) > (local.lastSaved||0))){
