@@ -1,5 +1,5 @@
 /* Momentum service worker — app-shell caching for offline use. */
-const VERSION = 'momentum-v7';
+const VERSION = 'momentum-v8';
 const SHELL = [
   './',
   './index.html',
