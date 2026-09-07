@@ -618,7 +618,7 @@
 
   <div class="pad">
     <div class="foot">
-      <span>Momentum · build v7</span>
+      <span>Momentum · build v8</span>
       <span x-text="'Last change · ' + lastSavedLabel()"></span>
     </div>
   </div>
@@ -739,7 +739,33 @@ function app(){
   const goal = (title, steps=[], note='', targetDate='') => ({id:uid(), title, note, targetDate, steps, createdAt:Date.now()});
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-  function seed(){ return {keyDates:[], categories:[]}; }
+  function seed(){
+    // Demo data only in sandboxed previews (opaque origin) or with ?demo=1 — never on the real site.
+    if(!/(^|[?&])demo=1/.test(location.search) && window.origin!=='null') return {keyDates:[], categories:[]};
+    // Generic demo data for previews only — no personal content.
+    const day = 86400000, now = Date.now();
+    const rep = (daysAgo, note) => ({id:uid(), t: now - daysAgo*day, note});
+    const in30 = new Date(now + 30*day).toISOString().slice(0,10);
+    const in120 = new Date(now + 120*day).toISOString().slice(0,10);
+    return {
+      keyDates:[{id:uid(), label:'Semester ends', date:in120}, {id:uid(), label:'Portfolio review', date:in30}],
+      focusLog:[{date:new Date(now-1*day).toISOString().slice(0,10), status:'done'}, {date:new Date(now-2*day).toISOString().slice(0,10), status:'done'}, {date:new Date(now-3*day).toISOString().slice(0,10), status:'done'}],
+      categories:[
+        {id:uid(), name:'Learning', goals:[
+          Object.assign(goal('Finish the online web course', [Object.assign(step('Watch course modules'), {target:27, current:12, unit:'classes', log:[{t:now-6*day,d:2},{t:now-4*day,d:3},{t:now-2*day,d:2},{t:now-1*day,d:1}]}), Object.assign(step('Submit assignments'), {target:10, current:4, unit:'tasks'}), step('Build the capstone project')], 'Foundation for a first developer job.', in30)),
+          goal('Read 12 books this year', [Object.assign(step('Books read'), {target:12, current:7, unit:'books'})])
+        ]},
+        {id:uid(), name:'Skills', goals:[
+          Object.assign(goal('Public speaking', [step('Volunteer to present once a week')]), {kind:'skill', reps:[rep(0,'Presented the lab results to the group'), rep(2,'Asked a question in the seminar'), rep(3,'Explained a bug fix to a teammate'), rep(6,'Led the stand-up'), rep(9,'5-minute talk at the club'), rep(13,'Read aloud for 10 minutes'), rep(20,'Mock interview with a friend')]}),
+          Object.assign(goal('Spanish conversation', []), {kind:'skill', reps:[rep(1,'20 min with a tandem partner'), rep(4,'Ordered coffee in Spanish'), rep(5,'Listened to a podcast episode'), rep(8,'Wrote a diary entry')]})
+        ]},
+        {id:uid(), name:'Life', goals:[
+          goal('Save for a summer trip', [Object.assign(step('Saved so far'), {target:1200, current:450, unit:'USD'})], '', in120),
+          goal('Run a 10k', [step('Sign up for the race'), step('Follow the 8-week plan')])
+        ]}
+      ]
+    };
+  }
 
   return {
     ready:false, theme:'light', now:Date.now(), lastSaved:null, lastProgress:null,
@@ -752,6 +778,7 @@ function app(){
     sync:{open:false, tokenDraft:'', importDraft:'', gistDraft:'', lastRemoteGoals:null}, syncStatus:'off', installable:false,
 
     async init(){
+      if(this._inited) return; this._inited = true;
       let state = null;
       try{ state = await HyperApp.getState(); }catch(e){}
       if(state && state.categories){
@@ -769,7 +796,16 @@ function app(){
       this.nudgeIndex = Math.floor(this.now/86400000);
       this.buildNudge();
       this.ready = true;
-      setInterval(()=>{ this.now = Date.now(); }, 60000);
+      const tick = () => {
+        const prevDay = Math.floor(this.now/86400000);
+        this.now = Date.now();
+        const day = Math.floor(this.now/86400000);
+        if(day !== prevDay){ this.nudgeIndex = day; this.buildNudge(); }
+      };
+      setInterval(tick, 60000);
+      document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') tick(); });
+      window.addEventListener('focus', tick);
+      window.addEventListener('pageshow', tick);
     },
     persist(){ this.lastSaved = Date.now(); HyperApp.setState({categories:this.categories, keyDates:this.keyDates, theme:this.theme, lastSaved:this.lastSaved, lastProgress:this.lastProgress}); },
     progress(){ this.lastProgress = Date.now(); this.persist(); },
@@ -818,11 +854,12 @@ function app(){
       let data; try{ data = JSON.parse(this.sync.importDraft); }catch(e){ this.say('That is not valid JSON'); return; }
       if(!data || !Array.isArray(data.categories)){ this.say('JSON needs a "categories" array'); return; }
       const norm = (arr) => (Array.isArray(arr)?arr:[]);
-      const cats = data.categories.map(c => ({ id: c.id||this.uid(), name: String(c.name||'Untitled'), goals: norm(c.goals).map(g => ({ id: g.id||this.uid(), title: String(g.title||'Untitled goal'), note: g.note||'', targetDate: g.targetDate||'', createdAt: g.createdAt||Date.now(), steps: norm(g.steps).map(s => ({ id: s.id||this.uid(), text: String(s.text||''), done: !!s.done, children: norm(s.children).map(c2 => ({ id: c2.id||this.uid(), text: String(c2.text||''), done: !!c2.done })) })) })) }));
+      const numeric = (s, o) => { if(s.target){ o.target=+s.target; o.current=Math.min(+(s.current||0), +s.target); o.unit=String(s.unit||''); if(Array.isArray(s.log)) o.log=s.log; } return o; };
+      const cats = data.categories.map(c => ({ id: c.id||this.uid(), name: String(c.name||'Untitled'), goals: norm(c.goals).map(g => ({ id: g.id||this.uid(), title: String(g.title||'Untitled goal'), note: g.note||'', targetDate: g.targetDate||'', kind: g.kind==='skill'?'skill':'', reps: norm(g.reps).map(r=>({id:r.id||this.uid(), t:+r.t||Date.now(), note:String(r.note||'')})), createdAt: g.createdAt||Date.now(), steps: norm(g.steps).map(s => numeric(s, { id: s.id||this.uid(), text: String(s.text||''), done: !!s.done, children: norm(s.children).map(c2 => numeric(c2, { id: c2.id||this.uid(), text: String(c2.text||''), done: !!c2.done })) })) })) }));
       const dates = norm(data.keyDates).map(d => ({ id: d.id||this.uid(), label: String(d.label||''), date: d.date||'' })).filter(d => d.label && d.date);
       const n = cats.reduce((s,c)=>s+c.goals.length,0);
       if(this.totalGoals()>0 && !confirm('Replace your current '+this.totalGoals()+' goals with the '+n+' in this import?')) return;
-      this.categories = cats; this.keyDates = dates; this.lastProgress = data.lastProgress || this.lastProgress;
+      this.categories = cats; this.keyDates = dates; this.lastProgress = data.lastProgress || this.lastProgress; this.focus = data.focus || null; this.focusLog = Array.isArray(data.focusLog) ? data.focusLog : [];
       this.sync.importDraft=''; this.sync.open=false; this.persist(); this.buildNudge();
       this.say('Imported '+n+' goal'+(n===1?'':'s')+' in '+cats.length+' categor'+(cats.length===1?'y':'ies'));
     },
